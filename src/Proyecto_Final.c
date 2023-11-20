@@ -28,30 +28,31 @@ uint32_t getProportionalValue(uint32_t input);
 
 uint16_t info = 0b00;
 uint32_t output_dac[2] = {0,(1023<<6)};
+uint8_t status_bomb_uart = 0;
 GPDMA_Channel_CFG_Type GPDMACfg;
 
 int main(void)
 {
 	SystemInit();
-//	configGPIO();
-//	configUART();
-//	configTimer0();
+	configGPIO();
+	configUART();
+	configTimer0();
 	configADC();
 
-	configPin();
-	configDAC();
-	configDMA();
+//	configPin();
+//	configDAC();
+//	configDMA();
 
 	while (1)
 	{
-				for (int var = 0; var < 10000000; ++var) {
-				}
-				ADC_StartCmd(LPC_ADC, ADC_START_NOW);
-				if (output_dac[1] == 0) {
-								output_dac[1] = (1023 <<6);
-							} else {
-								output_dac[1] = 0;
-							}
+//				for (int var = 0; var < 10000000; ++var) {
+//				}
+//				ADC_StartCmd(LPC_ADC, ADC_START_NOW);
+//				if (output_dac[1] == 0) {
+//								output_dac[1] = (1023 <<6);
+//							} else {
+//								output_dac[1] = 0;
+//							}
 	}
 	return 0;
 }
@@ -77,9 +78,8 @@ void configADC()
 
 	ADC_ChannelCmd(LPC_ADC, 0, ENABLE);				   // Canal 0 del ADC
 	ADC_EdgeStartConfig(LPC_ADC, ADC_START_ON_RISING); // Inicia por bajo
-	ADC_IntConfig(LPC_ADC, ADC_ADINTEN0, DISABLE);
-//	NVIC_EnableIRQ(ADC_IRQn);
-	NVIC_DisableIRQ(ADC_IRQn);
+	ADC_IntConfig(LPC_ADC, ADC_ADINTEN0, ENABLE);
+	NVIC_EnableIRQ(ADC_IRQn);
 }
 
 void ADC_IRQHandler()
@@ -87,18 +87,20 @@ void ADC_IRQHandler()
 	info = ((LPC_ADC->ADDR0) >> 4) & 0xFFF;
 
 //	output_dac[1] = (getProportionalValue(info)<<6);
-//	uint8_t duty_cycle = getDutyCycle(info);
-//	pwmGenerator(duty_cycle);
-//	UART_Send(LPC_UART2, &info, sizeof(info), BLOCKING);
-//
-//	if (info > 3100)
-//	{
-//		LPC_GPIO0->FIOSET |= 1;
-//	}
-//	else if (info < 3000)
-//	{
-//		LPC_GPIO0->FIOCLR |= 1;
-//	}
+
+	UART_Send(LPC_UART2, &info, sizeof(info), BLOCKING);
+
+	if(status_bomb_uart == 0){
+		if (info > 3100)
+			{
+				LPC_GPIO0->FIOSET |= 1;
+			}
+			else if (info < 3000)
+			{
+				LPC_GPIO0->FIOCLR |= 1;
+			}
+	}
+
 
 	LPC_ADC->ADGDR &= LPC_ADC->ADGDR;
 }
@@ -124,6 +126,9 @@ void configUART()
 	LPC_PINCON->PINSEL0 &= ~(0b1 << 21);
 	LPC_PINCON->PINSEL0 |= (0b1 << 20);
 
+	LPC_PINCON->PINSEL0 &= ~(0b1 << 23);
+	LPC_PINCON->PINSEL0 |= (0b1 << 22);
+
 	UART_CFG_Type UARTConfigStruct;
 	UART_FIFO_CFG_Type UARTFIFOConfigStruct;
 	// configuracion por defecto:
@@ -135,36 +140,49 @@ void configUART()
 	UART_FIFOConfig(LPC_UART2, &UARTFIFOConfigStruct);
 	// Habilita transmision
 	UART_TxCmd(LPC_UART2, ENABLE);
+
+	// Habilita interrupcion por el RX del UART
+	UART_IntConfig(LPC_UART2, UART_INTCFG_RBR, ENABLE);
+	// Habilita interrupcion por el estado de la linea UART
+	UART_IntConfig(LPC_UART2, UART_INTCFG_RLS, ENABLE);
+	NVIC_SetPriority(UART2_IRQn, 1);
+	//Habilita interrupcion por UART2
+	NVIC_EnableIRQ(UART2_IRQn);
+
 	return;
 }
 
-///* TIMER 1 config
-// * disparará el canal 0 de la DMA para realizar la copia de los datos al bank 0llevara registro del tiempo que dura la bomba en encendido
-// * */
-// void configTimer1()
-//{
-//	LPC_SC->PCONP |= (1 << 2);
-//	LPC_SC->PCLKSEL0 |= (1 << 4); // PCLK = cclk
-//
-//	LPC_TIM1->PR = 0;
-//	LPC_TIM1->MR0 = 10 * TIME_TIMER;
-//	//	LPC_TIM1->MR0 = (MAT_REGISTER_0_05_seg + 1) * 2 * DMA_SIZE - 1; // 0.05s * 2 * 100 = 10 seg
-//	LPC_TIM1->MCR = (0b11); // INT y RESET en Match0
-//	LPC_TIM1->IR |= (0x3F); // Clear all interrupt flag
-//	LPC_TIM1->TCR = 3;		// Enable and Reset
-//	LPC_TIM1->TCR &= ~2;
-//
-//	NVIC_EnableIRQ(TIMER1_IRQn);
-//}
-//
-// void TIMER1_IRQHandler()
-//{
-//	//	GPDMA_ChannelCmd(0, ENABLE); // habilito DMA para que copie los datos al bank0, lo hará cada 10seg
-//
-//	LPC_TIM1->IR |= (0x3F); // Clear all interrupt flag
-//	LPC_TIM1->TCR = 3;		// Enable and Reset
-//	LPC_TIM1->TCR &= ~2;
-//}
+void UART2_IRQHandler(void){
+        uint32_t intsrc, tmp, tmp1;// Receive Data Available or Character time-out
+        //Determina la fuente de interrupcion
+        intsrc = UART_GetIntId(LPC_UART2);
+        tmp = intsrc & UART_IIR_INTID_MASK;
+        // Evalua Line Status
+        if (tmp == UART_IIR_INTID_RLS){
+                tmp1 = UART_GetLineStatus(LPC_UART2);
+                tmp1 &= (UART_LSR_OE | UART_LSR_PE | UART_LSR_FE \
+                                | UART_LSR_BI | UART_LSR_RXFE);
+                // ingresa a un Loop infinito si hay error
+                if (tmp1) {
+                        while(1){};
+                }
+        }
+        uint8_t data=3;
+
+        if ((tmp == UART_IIR_INTID_RDA) || (tmp == UART_IIR_INTID_CTI)){
+                UART_Receive(LPC_UART2, &data, 1, NONE_BLOCKING);
+
+                if(data == 1){
+                	LPC_GPIO0->FIOSET |= 1;
+                	status_bomb_uart = 1;
+                }else if (data == 0) {
+                	LPC_GPIO0->FIOCLR |= 1;
+                	status_bomb_uart = 0;
+				}
+        }
+        return;
+}
+
 
 void configPin()
 {
