@@ -7,6 +7,8 @@
 #include "lpc17xx_adc.h"
 #include "lpc17xx_dac.h"
 #include "lpc17xx_gpdma.h"
+#include "lpc17xx_timer.h"
+#include "lpc17xx_clkpwr.h"
 
 #define TIME_TIMER 49999999
 
@@ -35,17 +37,26 @@ int main(void)
 // P0.0 como GPIO como salida
 void configGPIO()
 {
-	LPC_PINCON->PINSEL0 &= ~(0b11);
 
-	LPC_PINCON->PINMODE0 |= (0b11);
+	PINSEL_CFG_Type pin_gpio;
+	pin_gpio.Portnum = 0;
+	pin_gpio.Pinnum = 0;
+	pin_gpio.Funcnum = 0;
+	pin_gpio.Pinmode = 3;
 
-	LPC_GPIO0->FIODIR |= (0b1);
+	PINSEL_ConfigPin(&pin_gpio);
+
+	GPIO_SetDir(0, 1, 1);//GPIO como salida
 }
 
 void configADC()
 {
-	LPC_PINCON->PINSEL1 |= (1 << 14);  // ADC0 Pin0.23
-	LPC_PINCON->PINMODE1 |= (1 << 15); // Neither
+	PINSEL_CFG_Type pin_adc;
+	pin_adc.Portnum = 0;
+	pin_adc.Pinnum = 23;
+	pin_adc.Funcnum = 1;
+	pin_adc.Pinmode = 3;
+	PINSEL_ConfigPin(&pin_adc);
 
 	ADC_Init(LPC_ADC, 200000);						   // Frecuencia a la que convierte el ADC
 	ADC_BurstCmd(LPC_ADC, DISABLE);					   // Sin brust
@@ -59,7 +70,7 @@ void configADC()
 
 void ADC_IRQHandler()
 {
-	info = ((LPC_ADC->ADDR0) >> 4) & 0xFFF;
+	info = ADC_ChannelGetData(LPC_ADC, 0);
 
 
 	UART_Send(LPC_UART2, &info, sizeof(info), BLOCKING);
@@ -75,33 +86,46 @@ void ADC_IRQHandler()
 			}
 	}
 
-
 	LPC_ADC->ADGDR &= LPC_ADC->ADGDR;
 }
 
 void configTimer0()
 {
-	LPC_PINCON->PINSEL3 |= (3 << 26); // P1.29 as MAT0.1
+	TIM_TIMERCFG_Type timer0;
+	timer0.PrescaleOption = TIM_PRESCALE_TICKVAL;
+	timer0.PrescaleValue = 1;
 
-	LPC_SC->PCONP |= (1 << 1);
-	LPC_SC->PCLKSEL0 |= (1 << 2); // PCLK = cclk
 
-	LPC_TIM0->PR = 0;
-	LPC_TIM0->MR1 = TIME_TIMER;	  // toggle cada 0.5s
-	LPC_TIM0->MCR = (0b1 << 4);	  // Timer0 reset on Match1
-	LPC_TIM0->EMR |= (0b11 << 6); // MAT0.1 toggle mode
-	LPC_TIM0->IR |= (0x3F);		  // Clear all interrupt flag
-	LPC_TIM0->TCR = 3;			  // Enable and Reset
-	LPC_TIM0->TCR &= ~2;
+	TIM_MATCHCFG_Type match0_1;
+	match0_1.MatchChannel = 1;
+	match0_1.IntOnMatch = DISABLE;
+	match0_1.StopOnMatch = DISABLE;
+	match0_1.ResetOnMatch = ENABLE;
+	match0_1.ExtMatchOutputType = TIM_EXTMATCH_TOGGLE;
+	match0_1.MatchValue = TIME_TIMER;
+
+	TIM_ConfigMatch(LPC_TIM0,& match0_1);
+	TIM_Init(LPC_TIM0, TIM_TIMER_MODE, &timer0);//Modifica el PCLK a cclk/4
+
+	CLKPWR_SetPCLKDiv(CLKPWR_PCLKSEL_TIMER0, CLKPWR_PCLKSEL_CCLK_DIV_1); // PCLK = cclk
+	TIM_Cmd(LPC_TIM0, ENABLE);
 }
 
 void configUART()
 {
-	LPC_PINCON->PINSEL0 &= ~(0b1 << 21);
-	LPC_PINCON->PINSEL0 |= (0b1 << 20);
+	PINSEL_CFG_Type pin_RxUART;
+	pin_RxUART.Portnum = 0;
+	pin_RxUART.Pinnum = 3;
+	pin_RxUART.Funcnum = 1;
+	pin_RxUART.Pinmode = 3;
+	PINSEL_ConfigPin(&pin_RxUART);
 
-	LPC_PINCON->PINSEL0 &= ~(0b1 << 23);
-	LPC_PINCON->PINSEL0 |= (0b1 << 22);
+	PINSEL_CFG_Type pin_TxUART;
+	pin_TxUART.Portnum = 0;
+	pin_TxUART.Pinnum = 2;
+	pin_TxUART.Funcnum = 1;
+	pin_TxUART.Pinmode = 3;
+	PINSEL_ConfigPin(&pin_TxUART);
 
 	UART_CFG_Type UARTConfigStruct;
 	UART_FIFO_CFG_Type UARTFIFOConfigStruct;
