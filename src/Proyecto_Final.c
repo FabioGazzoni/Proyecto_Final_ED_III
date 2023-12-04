@@ -49,7 +49,7 @@ int main(void)
 
 void configGPIO()
 {
-	//como GPIO como salida
+	// como GPIO como salida
 	PINSEL_CFG_Type pin_gpio;
 	pin_gpio.Portnum = 0;
 	pin_gpio.Pinnum = 0;
@@ -121,7 +121,6 @@ void configUART()
 	// Habilita interrupcion por UART2
 	NVIC_EnableIRQ(UART2_IRQn);
 }
-
 
 void configADC()
 {
@@ -201,12 +200,12 @@ void UART2_IRQHandler(void)
 		// Recibe el dato de UART Rx
 		UART_Receive(LPC_UART2, &data, 1, NONE_BLOCKING);
 
-		//Si el dato es 1 la bomba enciende dependiendo de su estado de humedad
+		// Si el dato es 1 la bomba enciende dependiendo de su estado de humedad
 		if (data == 1)
 		{
 			status_bomb_uart = 1;
 		}
-		//Si el dato es 0 la bomba se apaga inmediatamente
+		// Si el dato es 0 la bomba se apaga inmediatamente
 		else if (data == 0)
 		{
 			LPC_GPIO0->FIOCLR |= 1;
@@ -265,29 +264,31 @@ void DMA_IRQHandler()
 /*
  * @brief Calcula el promedio de los 10 valores del ADC y lo guarda en prom_val_humedad
  */
-void calculate_prom_val_humedad(){
+void calculate_prom_val_humedad()
+{
 	uint16_t prom = 0;
-				for (int i = 0; i <= ADC_VAL_SIZE - 1; i++)
-				{
-					prom = +(val_humedad[i] >> 4) & 0xFFF;
-				}
-				prom_val_humedad = prom;
+	for (int i = 0; i <= ADC_VAL_SIZE - 1; i++)
+	{
+		prom = +(val_humedad[i] >> 4) & 0xFFF;
+	}
+	prom_val_humedad = prom;
 }
 
 /*
  * @brief Enciende o apaga la bomba segun el valor de prom_val_humedad y del estado de bomba apagada o encendida segun su estado
  * Si el valor es menor a 0b2000 la bomba se apaga, si es mayor a 0b3500 se encendera
  */
-void on_off_bomb(){
+void on_off_bomb()
+{
 	if (status_bomb_uart == 1)
+	{
+		if (prom_val_humedad > 3500)
 		{
-			if (prom_val_humedad > 3500)
-			{
-				GPIO_SetValue(0, 0b1<<0);
-			}
-			else if (prom_val_humedad < 2000)
-			{
-				GPIO_ClearValue(0, 0b1<<0);
-			}
+			GPIO_SetValue(0, 0b1 << 0);
 		}
+		else if (prom_val_humedad < 2000)
+		{
+			GPIO_ClearValue(0, 0b1 << 0);
+		}
+	}
 }
