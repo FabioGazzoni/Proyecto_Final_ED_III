@@ -20,13 +20,13 @@ void configUART();
 void configADC();
 void configDMA();
 
-void calculate_info_prom();
+void calculate_prom_val_humedad();
 void on_off_bomb();
 
 GPDMA_Channel_CFG_Type GPDMACfg0;
-uint32_t valores[ADC_VAL_SIZE];
+uint32_t val_humedad[ADC_VAL_SIZE];
 
-uint16_t info = 0b00;
+uint16_t prom_val_humedad = 0b00;
 uint8_t status_bomb_uart = 1;
 
 int main(void)
@@ -76,7 +76,7 @@ void configTimer0()
 	match0_1.MatchValue = TIME_TIMER;
 
 	TIM_ConfigMatch(LPC_TIM0, &match0_1);
-	TIM_Init(LPC_TIM0, TIM_TIMER_MODE, &timer0); // Modifica el PCLK a cclk/4
+	TIM_Init(LPC_TIM0, TIM_TIMER_MODE, &timer0); // Configuracion inicial, tambien modifica el PCLK a cclk/4
 
 	CLKPWR_SetPCLKDiv(CLKPWR_PCLKSEL_TIMER0, CLKPWR_PCLKSEL_CCLK_DIV_2); // PCLK = cclk/2
 	TIM_Cmd(LPC_TIM0, ENABLE);
@@ -104,7 +104,7 @@ void configUART()
 	UART_FIFO_CFG_Type UARTFIFOConfigStruct;
 	// configuracion por defecto:
 	UART_ConfigStructInit(&UARTConfigStruct);
-	// inicializa periferico
+	// Inicializa periferico y su FIFO
 	UART_Init(LPC_UART2, &UARTConfigStruct);
 	UART_FIFOConfigStructInit(&UARTFIFOConfigStruct);
 	// Inicializa FIFO
@@ -144,7 +144,7 @@ void configDMA()
 	GPDMA_LLI_Type LLI0;
 	// P2M ADC to Memoria
 	LLI0.SrcAddr = (uint32_t)&LPC_ADC->ADDR0;
-	LLI0.DstAddr = (uint32_t)valores;
+	LLI0.DstAddr = (uint32_t)val_humedad;
 	LLI0.NextLLI = (uint32_t)0;
 	LLI0.Control = ADC_VAL_SIZE // 10 datos
 				   | 2 << 18	// Origen de 32 bits
@@ -156,7 +156,7 @@ void configDMA()
 	GPDMACfg0.TransferSize = ADC_VAL_SIZE;
 	GPDMACfg0.TransferWidth = 0;
 	GPDMACfg0.SrcMemAddr = 0;
-	GPDMACfg0.DstMemAddr = (uint32_t)valores;
+	GPDMACfg0.DstMemAddr = (uint32_t)val_humedad;
 	GPDMACfg0.TransferType = GPDMA_TRANSFERTYPE_P2M;
 	GPDMACfg0.SrcConn = GPDMA_CONN_ADC;
 	GPDMACfg0.DstConn = 0;
@@ -198,12 +198,15 @@ void UART2_IRQHandler(void)
 
 	if ((tmp == UART_IIR_INTID_RDA) || (tmp == UART_IIR_INTID_CTI))
 	{
+		// Recibe el dato de UART Rx
 		UART_Receive(LPC_UART2, &data, 1, NONE_BLOCKING);
 
+		//Si el dato es 1 la bomba enciende dependiendo de su estado de humedad
 		if (data == 1)
 		{
 			status_bomb_uart = 1;
 		}
+		//Si el dato es 0 la bomba se apaga inmediatamente
 		else if (data == 0)
 		{
 			LPC_GPIO0->FIOCLR |= 1;
@@ -213,11 +216,11 @@ void UART2_IRQHandler(void)
 }
 
 /*
- * @brief Por cada interrupcion envia por UART2 el dato info y enciende o apaga la bomba dependiendo de su estado
+ * @brief Por cada interrupcion envia por UART2 el dato prom_val_humedad y enciende o apaga la bomba dependiendo de su estado
  */
 void TIMER0_IRQHandler()
 {
-	UART_Send(LPC_UART2, &info, sizeof(info), BLOCKING);
+	UART_Send(LPC_UART2, &prom_val_humedad, sizeof(prom_val_humedad), BLOCKING);
 
 	on_off_bomb();
 
@@ -225,28 +228,30 @@ void TIMER0_IRQHandler()
 }
 
 /*
- * @brief Interrumpe al recibir 10 nuevos datos del ADC y los promedia para ser guardado en info
+ * @brief Interrumpe al recibir 10 nuevos datos del ADC y los promedia para ser guardado en prom_val_humedad
  */
 void DMA_IRQHandler()
 {
-	GPDMA_ChannelCmd(DMA_CHANNEL, DISABLE); // Habilito DMA
-											// check GPDMA interrupt on channel 0
+	GPDMA_ChannelCmd(DMA_CHANNEL, DISABLE); // Deshabilito DMA en canal DMA_CHANNEL
+
 	if (GPDMA_IntGetStatus(GPDMA_STAT_INT, DMA_CHANNEL))
-	{ // check interrupt status on channel 0
-		// Check counter terminal status
+	{ // Verifica la interrupción por canal DMA_CHANNEL
+		// Verifica el estado de la interrupción
 		if (GPDMA_IntGetStatus(GPDMA_STAT_INTTC, DMA_CHANNEL))
 		{
-			// Clear terminate counter Interrupt pending
+			calculate_prom_val_humedad();
+
+			// Limpia la interrupción
 			GPDMA_ClearIntPending(GPDMA_STATCLR_INTTC, DMA_CHANNEL);
 
-			calculate_info_prom();
-
+			// Reinicia el DMA en canal DMA_CHANNEL
 			GPDMA_Setup(&GPDMACfg0);
 			GPDMA_ChannelCmd(DMA_CHANNEL, ENABLE); // Habilito DMA
 		}
+		// Verifica si se produjo una interrupcion por error en el canal DMA_CHANNEL
 		if (GPDMA_IntGetStatus(GPDMA_STAT_INTERR, DMA_CHANNEL))
 		{
-			// Clear error counter Interrupt pending
+			// Limpia la interrupcion por error
 			GPDMA_ClearIntPending(GPDMA_STATCLR_INTERR, DMA_CHANNEL);
 			while (1)
 			{
@@ -258,29 +263,29 @@ void DMA_IRQHandler()
 //---------------------FUNCIONES UTILES------------------------------------------
 
 /*
- * @brief Calcula el promedio de los 10 valores del ADC y lo guarda en info
+ * @brief Calcula el promedio de los 10 valores del ADC y lo guarda en prom_val_humedad
  */
-void calculate_info_prom(){
+void calculate_prom_val_humedad(){
 	uint16_t prom = 0;
 				for (int i = 0; i <= ADC_VAL_SIZE - 1; i++)
 				{
-					prom = +(valores[i] >> 4) & 0xFFF;
+					prom = +(val_humedad[i] >> 4) & 0xFFF;
 				}
-				info = prom;
+				prom_val_humedad = prom;
 }
 
 /*
- * @brief Enciende o apaga la bomba segun el valor de info y del estado de bomba apagada o encendida segun su estado
+ * @brief Enciende o apaga la bomba segun el valor de prom_val_humedad y del estado de bomba apagada o encendida segun su estado
  * Si el valor es menor a 0b2000 la bomba se apaga, si es mayor a 0b3500 se encendera
  */
 void on_off_bomb(){
 	if (status_bomb_uart == 1)
 		{
-			if (info > 3500)
+			if (prom_val_humedad > 3500)
 			{
 				GPIO_SetValue(0, 0b1<<0);
 			}
-			else if (info < 2000)
+			else if (prom_val_humedad < 2000)
 			{
 				GPIO_ClearValue(0, 0b1<<0);
 			}
