@@ -10,6 +10,7 @@
 #include "lpc17xx_timer.h"
 #include "lpc17xx_clkpwr.h"
 
+//MR = (tiempo * PCLK)/(PR + 1) - 1 = (1 * 100.000.000/2)/(0 + 1) - 1 = 49.999.999
 #define TIME_TIMER 49999999
 #define DMA_CHANNEL 7
 #define ADC_VAL_SIZE 10
@@ -276,7 +277,7 @@ void calculate_prom_val_humedad()
 
 /*
  * @brief Enciende o apaga la bomba segun el valor de prom_val_humedad y del estado de bomba apagada o encendida segun su estado
- * Si el valor es menor a 0b2000 la bomba se apaga, si es mayor a 0b3500 se encendera
+ * Si el valor es menor a 2000 la bomba se apaga, si es mayor a 3500 se encendera
  */
 void on_off_bomb()
 {
